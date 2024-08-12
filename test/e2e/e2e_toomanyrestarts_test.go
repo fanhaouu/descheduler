@@ -34,7 +34,6 @@ import (
 	componentbaseconfig "k8s.io/component-base/config"
 	utilptr "k8s.io/utils/ptr"
 
-	"sigs.k8s.io/descheduler/cmd/descheduler/app/options"
 	"sigs.k8s.io/descheduler/pkg/api"
 	apiv1alpha2 "sigs.k8s.io/descheduler/pkg/api/v1alpha2"
 	"sigs.k8s.io/descheduler/pkg/descheduler/client"
@@ -183,13 +182,6 @@ func TestTooManyRestarts(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rs, err := options.NewDeschedulerServer()
-			if err != nil {
-				t.Fatalf("Unable to initialize server: %v\n", err)
-			}
-			rs.Client = clientSet
-			rs.EventClient = clientSet
-
 			preRunNames := sets.NewString(getCurrentPodNames(t, ctx, clientSet, testNamespace.Name)...)
 			// Deploy the descheduler with the configured policy
 			deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMap(tc.policy)

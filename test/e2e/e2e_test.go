@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ghodss/yaml"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/removeduplicates"
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -119,7 +120,7 @@ func deschedulerDeployment(testName string) *appsv1.Deployment {
 						{
 							Name:            "descheduler",
 							Image:           os.Getenv("DESCHEDULER_IMAGE"),
-							ImagePullPolicy: "IfNotPresent",
+							ImagePullPolicy: "Always",
 							Command:         []string{"/bin/descheduler"},
 							Args:            []string{"--policy-config-file", "/policy-dir/policy.yaml", "--descheduling-interval", "100m", "--v", "4"},
 							Ports:           []v1.ContainerPort{{ContainerPort: 10258, Protocol: "TCP"}},
@@ -271,6 +272,7 @@ func initPluginRegistry() {
 	pluginregistry.Register(defaultevictor.PluginName, defaultevictor.New, &defaultevictor.DefaultEvictor{}, &defaultevictor.DefaultEvictorArgs{}, defaultevictor.ValidateDefaultEvictorArgs, defaultevictor.SetDefaults_DefaultEvictorArgs, pluginregistry.PluginRegistry)
 	pluginregistry.Register(podlifetime.PluginName, podlifetime.New, &podlifetime.PodLifeTime{}, &podlifetime.PodLifeTimeArgs{}, podlifetime.ValidatePodLifeTimeArgs, podlifetime.SetDefaults_PodLifeTimeArgs, pluginregistry.PluginRegistry)
 	pluginregistry.Register(removepodshavingtoomanyrestarts.PluginName, removepodshavingtoomanyrestarts.New, &removepodshavingtoomanyrestarts.RemovePodsHavingTooManyRestarts{}, &removepodshavingtoomanyrestarts.RemovePodsHavingTooManyRestartsArgs{}, removepodshavingtoomanyrestarts.ValidateRemovePodsHavingTooManyRestartsArgs, removepodshavingtoomanyrestarts.SetDefaults_RemovePodsHavingTooManyRestartsArgs, pluginregistry.PluginRegistry)
+	pluginregistry.Register(removeduplicates.PluginName, removeduplicates.New, &removeduplicates.RemoveDuplicates{}, &removeduplicates.RemoveDuplicatesArgs{}, removeduplicates.ValidateRemoveDuplicatesArgs, removeduplicates.SetDefaults_RemoveDuplicatesArgs, pluginregistry.PluginRegistry)
 }
 
 // RcByNameContainer returns a ReplicationController with specified name and container
@@ -602,7 +604,9 @@ func TestLowNodeUtilization(t *testing.T) {
 		},
 	)
 
-	podFilter, err := podutil.NewOptions().WithFilter(evictorFilter.(frameworktypes.EvictorPlugin).Filter).BuildFilterFunc()
+	podFilter, err := podutil.NewOptions().WithFilter(func(pod *v1.Pod) bool {
+		return evictorFilter.(frameworktypes.EvictorPlugin).Filter(pod)
+	}).BuildFilterFunc()
 	if err != nil {
 		t.Errorf("Error initializing pod filter function, %v", err)
 	}
@@ -637,7 +641,9 @@ func TestLowNodeUtilization(t *testing.T) {
 
 	waitForTerminatingPodsToDisappear(ctx, t, clientSet, rc.Namespace)
 
-	podFilter, err = podutil.NewOptions().WithFilter(evictorFilter.(frameworktypes.EvictorPlugin).Filter).BuildFilterFunc()
+	podFilter, err = podutil.NewOptions().WithFilter(func(pod *v1.Pod) bool {
+		return evictorFilter.(frameworktypes.EvictorPlugin).Filter(pod)
+	}).BuildFilterFunc()
 	if err != nil {
 		t.Errorf("Error initializing pod filter function, %v", err)
 	}
@@ -1749,6 +1755,7 @@ func waitForPodsRunning(ctx context.Context, t *testing.T, clientSet clientset.I
 		podList, err := clientSet.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: labels.SelectorFromSet(labelMap).String(),
 		})
+
 		if err != nil {
 			return false, err
 		}
