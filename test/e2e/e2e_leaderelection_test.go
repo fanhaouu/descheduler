@@ -132,12 +132,15 @@ func TestLeaderElection(t *testing.T) {
 		t.Fatalf("Unable to remove kube-system/descheduler lease: %v", err)
 	}
 	t.Logf("Removed kube-system/descheduler lease")
-	descheduler1 := startDeschedulerServer(t, ctx, clientSet, ns1)
+	pod1Name, deploy1, cm1 := startDeschedulerServer(t, ctx, clientSet, ns1)
 	time.Sleep(1 * time.Second)
-	descheduler2 := startDeschedulerServer(t, ctx, clientSet, ns2)
+	pod2Name, deploy2, cm2 := startDeschedulerServer(t, ctx, clientSet, ns2)
 	defer func() {
-		for _, deploy := range []*appsv1.Deployment{descheduler1, descheduler2} {
-			printPodLogs(ctx, t, clientSet, deploy.Name)
+		for _, podName := range []string{pod1Name, pod2Name} {
+			printPodLogs(ctx, t, clientSet, podName)
+		}
+
+		for _, deploy := range []*appsv1.Deployment{deploy1, deploy2} {
 			t.Logf("Deleting %q deployment...", deploy.Name)
 			err = clientSet.AppsV1().Deployments(deploy.Namespace).Delete(ctx, deploy.Name, metav1.DeleteOptions{})
 			if err != nil {
@@ -145,6 +148,14 @@ func TestLeaderElection(t *testing.T) {
 			}
 
 			waitForPodsToDisappear(ctx, t, clientSet, deploy.Labels, deploy.Namespace)
+		}
+
+		for _, cm := range []*v1.ConfigMap{cm1, cm2} {
+			t.Logf("Deleting %q CM...", cm.Name)
+			err = clientSet.CoreV1().ConfigMaps(cm.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
+			if err != nil {
+				t.Fatalf("Unable to delete %q CM: %v", cm.Name, err)
+			}
 		}
 
 		clientSet.CoordinationV1().Leases("kube-system").Delete(ctx, "descheduler", metav1.DeleteOptions{})
@@ -192,7 +203,7 @@ func createDeployment(t *testing.T, ctx context.Context, clientSet clientset.Int
 	return nil
 }
 
-func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clientset.Interface, testName string) *appsv1.Deployment {
+func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clientset.Interface, testName string) (string, *appsv1.Deployment, *v1.ConfigMap) {
 	var maxLifeTime uint = 5
 	podLifeTimeArgs := &podlifetime.PodLifeTimeArgs{
 		MaxPodLifeTimeSeconds: &maxLifeTime,
@@ -210,6 +221,7 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 		MinPodAge:               &metav1.Duration{Duration: 1 * time.Second},
 	}
 	deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMap(podlifetimePolicy(podLifeTimeArgs, evictorArgs))
+	deschedulerPolicyConfigMapObj.Name = fmt.Sprintf("%s-%s", deschedulerPolicyConfigMapObj.Name, testName)
 	if err != nil {
 		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 	}
@@ -220,16 +232,10 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 	}
 
-	defer func() {
-		t.Logf("Deleting %q CM...", deschedulerPolicyConfigMapObj.Name)
-		err = clientSet.CoreV1().ConfigMaps(deschedulerPolicyConfigMapObj.Namespace).Delete(ctx, deschedulerPolicyConfigMapObj.Name, metav1.DeleteOptions{})
-		if err != nil {
-			t.Fatalf("Unable to delete %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-		}
-	}()
-
 	deschedulerDeploymentObj := deschedulerDeployment(testName)
 	deschedulerDeploymentObj.Name = fmt.Sprintf("%s-%s", deschedulerDeploymentObj.Name, testName)
+	args := deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args
+	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = append(args, "--leader-elect")
 	t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
 	_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
 	if err != nil {
@@ -237,6 +243,6 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 	}
 
 	t.Logf("Waiting for the descheduler pod running")
-	waitForPodsRunning(ctx, t, clientSet, deschedulerDeploymentObj.Labels, 1, deschedulerDeploymentObj.Namespace)
-	return deschedulerDeploymentObj
+	podName := waitForPodsRunning(ctx, t, clientSet, deschedulerDeploymentObj.Labels, 1, deschedulerDeploymentObj.Namespace)
+	return podName, deschedulerDeploymentObj, deschedulerPolicyConfigMapObj
 }
