@@ -27,7 +27,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -126,12 +125,6 @@ func TestLeaderElection(t *testing.T) {
 	podListBOrg := getCurrentPodNames(t, ctx, clientSet, ns2)
 
 	t.Log("Starting deschedulers")
-	// Delete the descheduler lease
-	err = clientSet.CoordinationV1().Leases("kube-system").Delete(ctx, "descheduler", metav1.DeleteOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		t.Fatalf("Unable to remove kube-system/descheduler lease: %v", err)
-	}
-	t.Logf("Removed kube-system/descheduler lease")
 	pod1Name, deploy1, cm1 := startDeschedulerServer(t, ctx, clientSet, ns1)
 	time.Sleep(1 * time.Second)
 	pod2Name, deploy2, cm2 := startDeschedulerServer(t, ctx, clientSet, ns2)
@@ -157,8 +150,6 @@ func TestLeaderElection(t *testing.T) {
 				t.Fatalf("Unable to delete %q CM: %v", cm.Name, err)
 			}
 		}
-
-		clientSet.CoordinationV1().Leases("kube-system").Delete(ctx, "descheduler", metav1.DeleteOptions{})
 	}()
 
 	// wait for a while so all the pods are 5 seconds older
